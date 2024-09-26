@@ -42,8 +42,8 @@ while True:
             R2, _ = cv2.Rodrigues(rvec2)
             R = R2 @ R1.T
             t = tvec2 - R @ tvec1
-            print('rotation: \n'R)
-            print(''t)
+            print("rotation matrix: \n",R)
+            print("translation vector: \n",t)
 
     
 
