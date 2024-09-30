@@ -5,7 +5,8 @@ import numpy as np
 import cv2
 from ctypes import *
 from detect_function import YOLOv5Detector
- 
+import pupil_apriltags as apriltags
+
 class KalmanFilter:
     def __init__(self):
         # 状态向量 [x, y, vx, vy]，位置和速度
@@ -56,11 +57,27 @@ class KalmanFilter:
     
 weights_path = 'models/car.engine'
 detector = YOLOv5Detector(weights_path, data='yaml/car.yaml', conf_thres=0.3, iou_thres=0.5, max_det=1, ui=True)
+cam_caliMatrix = np.load('./cam_calibration.npy')
+matrix = cam_caliMatrix['camera_matrix']
+dist = cam_caliMatrix['dist_coeffs']
+apriltags_detector = apriltags.Detector(families='tag36h11', nthreads=1, quad_decimate=1.0, 
+                                        quad_sigma=0.0, refine_edges=1, decode_sharpening=0.25, debug=0)
+tag_size = 0.05 #TODO:视情况修改(m)
+object_points = np.array([[-tag_size/2, -tag_size/2, 0],
+                          [ tag_size/2, -tag_size/2, 0],
+                          [ tag_size/2,  tag_size/2, 0],
+                          [-tag_size/2,  tag_size/2, 0]], dtype=np.float32)
 
+def aTag_detection(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    tags = detector.detect(gray)
+    if tags:
+        corners = tags[0].corners
+        cv2.polylines(frame, [np.int32(corners)], True, (0, 255, 0), 5)
+        return corners
 
-def detection(img):
+def detection(img): #yolo detection
     result = detector.predict(img)
-    
     for detection in result:
         cls, xywh, conf = detection
         if cls == 'car':
@@ -163,11 +180,29 @@ cv2.namedWindow('frame1')
 cv2.setMouseCallback('frame1', get_mouse_click1)
 cv2.namedWindow('frame2')
 cv2.setMouseCallback('frame2', get_mouse_click2)
+print("Click on the four corners of the screen in order: top left, top right, bottom right")
+cam_pos = None
 while True:
     ret1, frame1 = cap1.read()
     ret2, frame2 = cap2.read()
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
+    if cam_pos == None:
+        gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+        corners1 = aTag_detection(frame1)
+        gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+        corners2 = aTag_detection(frame2)
+        if corners1 and corners2:
+            ret1, rvec1, tvec1 = cv2.solvePnP(object_points, corners1, matrix, dist)
+            ret2, rvec2, tvec2 = cv2.solvePnP(object_points, corners2, matrix, dist)
+            if ret1 and ret2:
+                R1, _ = cv2.Rodrigues(rvec1)
+                R2, _ = cv2.Rodrigues(rvec2)
+                R = R2 @ R1.T
+                T = tvec2 - R @ tvec1
+            print("rotation matrix: \n",R)
+            print("translation vector: \n",t)
+            cam_pos = R,T
     if len(calibration_points_fr1) == 3:
         cv2.setMouseCallback("frame1", no_mouse_click)
         transformed_frame1 = apply_affine_transform(input_pts=calibration_points_fr1, output_pts=output_points, frame=frame1)
