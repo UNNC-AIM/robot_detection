@@ -1,6 +1,3 @@
-import sys
-import threading
-import msvcrt
 import numpy as np
 import cv2
 from ctypes import *
@@ -130,8 +127,8 @@ cap2 = cv2.VideoCapture(0)
 calibration_points_fr1 = []
 calibration_points_fr2 = []
 output_points = [[0, 0], [640, 0], [640, 480]]
-car_cords1 = [[0,0]]
-car_cords2 = [[0,0]]
+car_coords1 = [[0,0]]
+car_coords2 = [[0,0]]
 
 x_values = np.arange(0, 641, 40)
 y_values = np.arange(0, 481, 40)
@@ -175,6 +172,15 @@ def nearest_neighbor(grid_points, pt):
     
     return nearest_point
 
+def transform_point(point, R, T):
+    # 将点转换为齐次坐标
+    point_homogeneous = np.array([point[0], point[1], 0, 1], dtype=np.float32)
+    
+    # 应用旋转和平移
+    transformed_point = T @ point_homogeneous[:3] + R
+    
+    return transformed_point[:2]  # 返回非齐次坐标 (x, y)
+
 
 cv2.namedWindow('frame1')
 cv2.setMouseCallback('frame1', get_mouse_click1)
@@ -182,16 +188,49 @@ cv2.namedWindow('frame2')
 cv2.setMouseCallback('frame2', get_mouse_click2)
 print("Click on the four corners of the screen in order: top left, top right, bottom right")
 cam_pos = None
+def process_frame(frame, calibration_points, output_points, frame_number):
+    transformed_frame = apply_affine_transform(input_pts=calibration_points, output_pts=output_points, frame=frame)
+    transformed_frame = cv2.resize(transformed_frame, (640, 480), interpolation=cv2.INTER_AREA)
+    if frame_number == 1:
+        car_coords = car_coords1
+    if frame_number == 2:
+        car_coords = car_coords2
+    car_x, car_y = detection(frame)
+    if car_x is not None and car_y is not None:
+        # 标记目标
+        target_coords = cord_transform((car_x, car_y), calibration_points, output_points)
+        draw_point_on_frame(transformed_frame, (int(target_coords[0]), int(target_coords[1])))
+        cv2.putText(transformed_frame, "car", (int(target_coords[0]) + 10, int(target_coords[1]) + 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        car_coords.append([target_coords[0], target_coords[1]])
+        nearest_neighbor_coords = nearest_neighbor(grid_points, target_coords)
+        draw_point_on_frame(transformed_frame, nearest_neighbor_coords, (0, 0, 255))
+
+        # 卡尔曼滤波处理
+        filtered_coords = kalman_filter(car_coords)
+        draw_point_on_frame(transformed_frame, (int(filtered_coords[0]), int(filtered_coords[1])), (255, 0, 0))
+        
+        prediction_neighbor = nearest_neighbor(grid_points, filtered_coords)
+        draw_point_on_frame(transformed_frame, prediction_neighbor, (255, 255, 255), 2)
+        cv2.putText(transformed_frame, 'prediction', (int(filtered_coords[0]) + 10, int(filtered_coords[1]) + 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+    return transformed_frame
+
 while True:
     ret1, frame1 = cap1.read()
     ret2, frame2 = cap2.read()
+
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
-    if cam_pos == None:
+
+    if cam_pos is None:
         gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
         corners1 = aTag_detection(frame1)
         gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
         corners2 = aTag_detection(frame2)
+        
         if corners1 and corners2:
             ret1, rvec1, tvec1 = cv2.solvePnP(object_points, corners1, matrix, dist)
             ret2, rvec2, tvec2 = cv2.solvePnP(object_points, corners2, matrix, dist)
@@ -200,51 +239,20 @@ while True:
                 R2, _ = cv2.Rodrigues(rvec2)
                 R = R2 @ R1.T
                 T = tvec2 - R @ tvec1
-            print("rotation matrix: \n",R)
-            print("translation vector: \n",t)
-            cam_pos = R,T
+                print("rotation matrix: \n", R)
+                print("translation vector: \n", T)
+                cam_pos = (R, T)
+
     if len(calibration_points_fr1) == 3:
         cv2.setMouseCallback("frame1", no_mouse_click)
-        transformed_frame1 = apply_affine_transform(input_pts=calibration_points_fr1, output_pts=output_points, frame=frame1)
-        transformed_frame1 = cv2.resize(transformed_frame1, (640,480), interpolation=cv2.INTER_AREA)
-        carx1, cary1 = detection(frame1)
-        if carx1 != None and cary1 != None:
-            # 标记目标
-            (tx1,ty1) = cord_transform((carx1,cary1),calibration_points_fr1,output_points)
-            draw_point_on_frame(transformed_frame1, (int(tx1),int(ty1)))
-            cv2.putText(transformed_frame1, "car", (int(tx1)+10,int(ty1)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-            car_cords1.append([tx1, ty1])
-            NN1 = nearest_neighbor(grid_points,(tx1,ty1))
-            draw_point_on_frame(transformed_frame1, NN1,(0,0,255))
-            # 黑魔法
-            ca1 = kalman_filter(car_cords1)
-            KNN1 = nearest_neighbor(grid_points,ca1)
-            draw_point_on_frame(transformed_frame1, (int(ca1[0]),int(ca1[1])),(255,0,0))
-            draw_point_on_frame(transformed_frame1, KNN1,(255,255,255),2)
-            cv2.putText(transformed_frame1,'prediction',(int(ca1[0])+10,int(ca1[1])+10),cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
+        transformed_frame1 = process_frame(frame1, calibration_points_fr1, output_points, 1)
         cv2.imshow('transform1', transformed_frame1)
-
 
     if len(calibration_points_fr2) == 3:
         cv2.setMouseCallback("frame2", no_mouse_click)
-        transformed_frame2 = apply_affine_transform(input_pts=calibration_points_fr2, output_pts=output_points, frame=frame2)
-        transformed_frame2 = cv2.resize(transformed_frame2, (640,480), interpolation=cv2.INTER_AREA)
-        carx2, cary2 = detection(frame2)
-        if carx2 != None and cary2 != None:
-            # 标记目标
-            (tx2,ty2) = cord_transform((carx2,cary2),calibration_points_fr2,output_points)
-            draw_point_on_frame(transformed_frame2, (int(tx2),int(ty2)))
-            cv2.putText(transformed_frame2, "car", (int(tx2)+10,int(ty2)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-            car_cords2.append([tx2, ty2])
-            NN2 = nearest_neighbor(grid_points,(tx2,ty2))
-            draw_point_on_frame(transformed_frame2, NN2,(0,0,255))
-            # 黑魔法
-            ca2 = kalman_filter(car_cords2)
-            KNN2 = nearest_neighbor(grid_points,ca2)
-            draw_point_on_frame(transformed_frame2, (int(ca2[0]),int(ca2[1])),(255,0,0))
-            draw_point_on_frame(transformed_frame2, KNN2,(255,255,255),2)
-            cv2.putText(transformed_frame2,'prediction',(int(ca2[0])+10,int(ca2[1])+10),cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
+        transformed_frame2 = process_frame(frame2, calibration_points_fr2, output_points, 2)
         cv2.imshow('transform2', transformed_frame2)
+
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
