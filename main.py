@@ -153,7 +153,7 @@ def no_mouse_click(event, x, y, flags, param):
 
 
 def draw_point_on_frame(frame, point, color=(0, 255, 0), radius=5, thickness=-1):
-    # 绘制
+    # draw
     cv2.circle(frame, point, radius, color, thickness)
 
 def nearest_neighbor(grid_points, pt):
