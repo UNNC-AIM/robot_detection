@@ -87,12 +87,9 @@ def detect_robot(img): #yolo detect
         if cls == 'car':
             left, top, w, h = xywh
             left, top, w, h = int(left), int(top), int(w), int(h)
-            # find center point
-            x_center = left + w // 2
-            y_center = top + h // 2
             print('positive detection')
-            return x_center, y_center  
-        
+            return x,y,w,h
+
     return None, None
 
 
@@ -169,6 +166,36 @@ def transform_pixel_coordinates(K ,R, T, pixel_coords_cam1):
 
     return pixel_coords_cam2
 
+import cv2
+import numpy as np
+
+def estimate_apriltag_world_pose(corners, tag_size, camera_matrix, dist_coeffs):
+   
+    # 定义 AprilTag 四个角点在 3D 世界坐标中的位置（单位：米）
+    half_size = tag_size / 2
+    object_points = np.array([
+        [-half_size, -half_size, 0],  # 左下角
+        [half_size, -half_size, 0],   # 右下角
+        [half_size, half_size, 0],    # 右上角
+        [-half_size, half_size, 0]    # 左上角
+    ], dtype=np.float32)
+
+    # 将检测到的角点坐标转换为适合 cv2.solvePnP 的形状
+    image_points = np.array(corners, dtype=np.float32)
+
+    # 使用 solvePnP 计算旋转向量和平移向量
+    ret, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
+
+    if ret:
+        # 旋转向量转化为旋转矩阵
+        R, _ = cv2.Rodrigues(rvec)
+
+        return tvec.ravel()
+    else:
+        raise ValueError("solvePnP failed")
+
+
+
     
 
 cv2.namedWindow('frame1')
@@ -177,17 +204,19 @@ cv2.namedWindow('frame2')
 cv2.setMouseCallback('frame2', lambda e, x, y, f, p: calibration_points_fr2.append([x, y]) if e == cv2.EVENT_LBUTTONDOWN else None)
 print("Click on the four corners of the screen in order: top left, top right, bottom right")
 cam_pos = None
-
-def process_frame(frame, calibration_points, output_points, frame_number):
+tag_pixel_widths = [0,0]
+def process_frame(frame, calibration_points, output_points, frame_number,tag_corners):
     transformed_frame = apply_affine_transform(input_pts=calibration_points, output_pts=output_points, frame=frame)
     transformed_frame = cv2.resize(transformed_frame, (640, 480), interpolation=cv2.INTER_AREA)
     if frame_number == 1:
         car_coords = car_coords1
     if frame_number == 2:
         car_coords = car_coords2
-    car_x, car_y = detect_robot(frame)
+    car_x, car_y, car_w, car_h = detect_robot(frame)
+    x_center = car_x + car_w // 2
+    y_center = car_y + car_h // 2
     if car_x is not None and car_y is not None:
-        target_coords = cord_transform((car_x, car_y), calibration_points, output_points)
+        target_coords = cord_transform((x_center, y_center), calibration_points, output_points)
         draw_point_on_frame(transformed_frame, (int(target_coords[0]), int(target_coords[1])))
         cv2.putText(transformed_frame, "car", (int(target_coords[0]) + 10, int(target_coords[1]) + 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -195,6 +224,13 @@ def process_frame(frame, calibration_points, output_points, frame_number):
         car_coords.append([target_coords[0], target_coords[1]])
         nearest_neighbor_coords = nearest_neighbor(grid_points, target_coords)
         draw_point_on_frame(transformed_frame, nearest_neighbor_coords, (0, 0, 255))
+        if tag_corners is not None and tag_pixel_widths[frame_number-1]<np.linalg.norm(np.array(tag_corners[0]) - np.array(tag_corners[1])):
+            tag_pixel_widths[frame_number-1] = np.linalg.norm(np.array(tag_corners[0]) - np.array(tag_corners[1]))
+        if tag_corners is None:
+            bot_corners = [[car_x,car_y],[car_x+car_w,car_y],[car_x,car_y+car_h],[car_x+car_w,car_y+car_h]]
+            robot_width = car_w/tag_pixel_widths[frame_number-1]*tag_size
+            bot_world_coord = estimate_apriltag_world_pose(bot_corners, robot_width, matrix, dist)
+            print(bot_world_coord)
 
         # kalman filter
         filtered_coords = kalman_filter(car_coords)
@@ -220,7 +256,6 @@ while True:
     if corners1 is not None and corners2 is not None:
         ret1, rvec1, tvec1 = cv2.solvePnP(object_points, corners1, matrix, dist)
         ret2, rvec2, tvec2 = cv2.solvePnP(object_points, corners2, matrix, dist)
-
         if ret1 and ret2 and cam_pos is None:
             R1, _ = cv2.Rodrigues(rvec1)
             R2, _ = cv2.Rodrigues(rvec2)
@@ -234,21 +269,25 @@ while True:
                 x += corner[0]
                 y += corner[1]
             central_pt = (x/4,y/4)
-            approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
+            world_coord1 =  str(estimate_apriltag_world_pose(corners1, tag_size, matrix, dist))
+            world_coord2 =  str(estimate_apriltag_world_pose(corners2, tag_size, matrix, dist))
+            #approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
             draw_point_on_frame(frame1, central_pt,(128,256,0))
-            draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
+            cv2.putText(frame1, world_coord1, (int(central_pt[0])-50,int(central_pt[1])),
+                        cv2.FONT_HERSHEY_SIMPLEX, .5, (128,256,0), 2)
+            #draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
     
 
     if len(calibration_points_fr1) == 3:
         cv2.setMouseCallback("frame1", no_mouse_click)
-        transformed_frame1 = process_frame(frame1, calibration_points_fr1, output_points, 1)
+        transformed_frame1 = process_frame(frame1, calibration_points_fr1, output_points, 1 ,corners1)
         cv2.imshow('transform1', transformed_frame1)
 
     if len(calibration_points_fr2) == 3:
         cv2.setMouseCallback("frame2", no_mouse_click)
-        transformed_frame2 = process_frame(frame2, calibration_points_fr2, output_points, 2)
+        transformed_frame2 = process_frame(frame2, calibration_points_fr2, output_points, 2 ,corners2)
         cv2.imshow('transform2', transformed_frame2)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
