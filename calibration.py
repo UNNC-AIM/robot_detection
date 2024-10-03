@@ -55,7 +55,7 @@ ret, mtx, dist, rvecs, tvecs = \
 
 
 print("ret:",ret  )
-print("mtx:\n",mtx)      # 内参数矩阵
+print("mtx:\n",mtx)   # 内参数矩阵
 print("dist畸变值:\n",dist   )   # 畸变系数   distortion cofficients = (k_1,k_2,p_1,p_2,k_3)
 print("rvecs旋转（向量）外参:\n",rvecs)   # 旋转向量  # 外参数
 print("tvecs平移（向量）外参:\n",tvecs  )  # 平移向量  # 外参数

@@ -52,31 +52,38 @@ class KalmanFilter:
 
         return self.state[:2]  # Return the updated [x, y]
 
+
+
+#initialize
 weights_path = 'models/car.engine'
 detector = YOLOv5Detector(weights_path, data='yaml/car.yaml', conf_thres=0.3, iou_thres=0.5, max_det=1, ui=True)
-cam_caliMatrix = np.load('./cam_calibration.npy')
+cam_caliMatrix = np.load('./camera_calibration.npz')
 matrix = cam_caliMatrix['camera_matrix']
 dist = cam_caliMatrix['dist_coeffs']
 apriltags_detector = apriltags.Detector(families='tag36h11', nthreads=1, quad_decimate=1.0, 
                                         quad_sigma=0.0, refine_edges=1, decode_sharpening=0.25, debug=0)
-tag_size = .1 #TODO: modify if needed
+tag_size = .08 #TODO: modify if needed (m)
 object_points = np.array([[-tag_size/2, -tag_size/2, 0],
                           [ tag_size/2, -tag_size/2, 0],
                           [ tag_size/2,  tag_size/2, 0],
                           [-tag_size/2,  tag_size/2, 0]], dtype=np.float32)
 
-def aTag_detection(frame):
+
+
+def detect_apriltag(frame): #apriltag detect
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    tags = detector.detect(gray)
+    tags = apriltags_detector.detect(gray)
     if tags:
         corners = tags[0].corners
         cv2.polylines(frame, [np.int32(corners)], True, (0, 255, 0), 5)
+        for corner in corners:
+            cv2.circle(frame, (int(corner[0]), int(corner[1])), 5, (255, 0, 0), -1)  
         return corners
 
-def detection(img): #yolo detection
+def detect_robot(img): #yolo detect
     result = detector.predict(img)
-    for detection in result:
-        cls, xywh, conf = detection
+    for detect_robot in result:
+        cls, xywh, conf = detect_robot
         if cls == 'car':
             left, top, w, h = xywh
             left, top, w, h = int(left), int(top), int(w), int(h)
@@ -87,25 +94,20 @@ def detection(img): #yolo detection
             return x_center, y_center  
         
     return None, None
+
+
 def apply_affine_transform(input_pts, output_pts, frame):
-    # Calculate the affine transformation matrix
     matrix = cv2.getAffineTransform(np.float32(input_pts), np.float32(output_pts))
-    # Apply the affine transformation to the frame
     transformed_frame = cv2.warpAffine(frame, matrix, (frame.shape[1], frame.shape[0]))
     return transformed_frame
 
 def cord_transform(input_pt, src, dst):
     src_points = np.array(src, dtype=np.float32)
     dst_points = np.array(dst, dtype=np.float32)
-    
     affine_matrix = cv2.getAffineTransform(src_points, dst_points)
-    
     input_point = np.array([[input_pt]], dtype=np.float32)
-
     transformed_point = cv2.transform(input_point, affine_matrix)
-    
     x_prime, y_prime = transformed_point[0][0]
-    
     return (x_prime, y_prime)
 
 def kalman_filter(coordinates):
@@ -116,7 +118,6 @@ def kalman_filter(coordinates):
         prediction = kf.predict()  
         updated = kf.update(coord)  # update coordinates using observation
         predictions.append(updated)
-
     return predictions[-1]
 
 cap1 = cv2.VideoCapture(1)
@@ -136,64 +137,50 @@ grid_x, grid_y = np.meshgrid(x_values, y_values)
 grid_points = np.stack((grid_x, grid_y), axis=-1)
 
 
-# Mouse callback function to record the mouse click position
-def get_mouse_click1(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN:  
-        print(f"Mouse clicked at position: ({x}, {y})")
-        calibration_points_fr1.append([x, y]) # ul ur dr
-        print(len(calibration_points_fr1))
-def get_mouse_click2(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN:  
-        print(f"Mouse clicked at position: ({x}, {y})")
-        calibration_points_fr2.append([x, y]) #same as above
-        print(len(calibration_points_fr2))
-
 def no_mouse_click(event, x, y, flags, param): 
     pass
 
 
 def draw_point_on_frame(frame, point, color=(0, 255, 0), radius=5, thickness=-1):
     # draw
+    point = (int(point[0]), int(point[1]))
+    point = tuple(point)
     cv2.circle(frame, point, radius, color, thickness)
 
 def nearest_neighbor(grid_points, pt):
-
     pt = np.array(pt)
-    
      # Calculate the Euclidean distance between each grid point and the input coordinates
     distances = np.linalg.norm(grid_points - pt, axis=-1)
-    
-    # find index
     nearest_index = np.unravel_index(np.argmin(distances), distances.shape)
-    
-    # return nearest pt
     nearest_point = tuple(grid_points[nearest_index])
-    
     return nearest_point
 
-def transform_point(point, R, T):
 
-    point_homogeneous = np.array([point[0], point[1], 0, 1], dtype=np.float32)
-    
-    # transform
-    transformed_point = T @ point_homogeneous[:3] + R
-    
-    return transformed_point[:2]
+import numpy as np
 
-def ralative_coord(x,y,R,T):
-    # Returns coordinates based on positional estimation   
-    homo_pt =  np.array([x,y,0,1], dtype=np.float32)
-    transformed_point = T @ homo_pt +R
+def transform_pixel_coordinates(K ,R, T, pixel_coords_cam1):
+   
+    pixel_homogeneous_cam1 = np.array([pixel_coords_cam1[0], pixel_coords_cam1[1], 1], dtype=float).reshape(3, 1)
 
-    return transformed_point[:2]
+    normalized_coords_cam1 = np.linalg.inv(K) @ pixel_homogeneous_cam1
+
+    transformed_coords_cam2 = R @ normalized_coords_cam1[:3] + T
+
+    pixel_homogeneous_cam2 = K @ transformed_coords_cam2
+
+    pixel_coords_cam2 = (pixel_homogeneous_cam2 / pixel_homogeneous_cam2[2]).flatten()[:2]
+
+    return pixel_coords_cam2
+
     
 
 cv2.namedWindow('frame1')
-cv2.setMouseCallback('frame1', get_mouse_click1)
+cv2.setMouseCallback('frame1', lambda e, x, y, f, p: calibration_points_fr1.append([x, y]) if e == cv2.EVENT_LBUTTONDOWN else None)
 cv2.namedWindow('frame2')
-cv2.setMouseCallback('frame2', get_mouse_click2)
+cv2.setMouseCallback('frame2', lambda e, x, y, f, p: calibration_points_fr2.append([x, y]) if e == cv2.EVENT_LBUTTONDOWN else None)
 print("Click on the four corners of the screen in order: top left, top right, bottom right")
 cam_pos = None
+
 def process_frame(frame, calibration_points, output_points, frame_number):
     transformed_frame = apply_affine_transform(input_pts=calibration_points, output_pts=output_points, frame=frame)
     transformed_frame = cv2.resize(transformed_frame, (640, 480), interpolation=cv2.INTER_AREA)
@@ -201,7 +188,7 @@ def process_frame(frame, calibration_points, output_points, frame_number):
         car_coords = car_coords1
     if frame_number == 2:
         car_coords = car_coords2
-    car_x, car_y = detection(frame)
+    car_x, car_y = detect_robot(frame)
     if car_x is not None and car_y is not None:
         target_coords = cord_transform((car_x, car_y), calibration_points, output_points)
         draw_point_on_frame(transformed_frame, (int(target_coords[0]), int(target_coords[1])))
@@ -227,26 +214,35 @@ while True:
     ret1, frame1 = cap1.read()
     ret2, frame2 = cap2.read()
 
+
+    gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+    corners1 = detect_apriltag(frame1)
+    gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+    corners2 = detect_apriltag(frame2)
+    x = y = 0
+    if corners1 is not None and corners2 is not None:
+        ret1, rvec1, tvec1 = cv2.solvePnP(object_points, corners1, matrix, dist)
+        ret2, rvec2, tvec2 = cv2.solvePnP(object_points, corners2, matrix, dist)
+
+        if ret1 and ret2 and cam_pos is None:
+            R1, _ = cv2.Rodrigues(rvec1)
+            R2, _ = cv2.Rodrigues(rvec2)
+            R = R2 @ R1.T
+            T = tvec2 - R @ tvec1
+            print("rotation matrix: \n", R)
+            print("translation vector: \n", T)
+            cam_pos = (R, T)
+        if cam_pos is not None:
+            for corner in corners1:
+                x += corner[0]
+                y += corner[1]
+            central_pt = (x/4,y/4)
+            approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
+            draw_point_on_frame(frame1, central_pt,(128,256,0))
+            draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
-
-    if cam_pos is None:
-        gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-        corners1 = aTag_detection(frame1)
-        gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-        corners2 = aTag_detection(frame2)
-        
-        if corners1 and corners2:
-            ret1, rvec1, tvec1 = cv2.solvePnP(object_points, corners1, matrix, dist)
-            ret2, rvec2, tvec2 = cv2.solvePnP(object_points, corners2, matrix, dist)
-            if ret1 and ret2:
-                R1, _ = cv2.Rodrigues(rvec1)
-                R2, _ = cv2.Rodrigues(rvec2)
-                R = R2 @ R1.T
-                T = tvec2 - R @ tvec1
-                print("rotation matrix: \n", R)
-                print("translation vector: \n", T)
-                cam_pos = (R, T)
+    
 
     if len(calibration_points_fr1) == 3:
         cv2.setMouseCallback("frame1", no_mouse_click)
