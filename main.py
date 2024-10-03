@@ -155,9 +155,6 @@ def nearest_neighbor(grid_points, pt):
     nearest_point = tuple(grid_points[nearest_index])
     return nearest_point
 
-
-import numpy as np
-
 def transform_pixel_coordinates(K ,R, T, pixel_coords_cam1):
    
     pixel_homogeneous_cam1 = np.array([pixel_coords_cam1[0], pixel_coords_cam1[1], 1], dtype=float).reshape(3, 1)
