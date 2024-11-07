@@ -4,6 +4,8 @@ from ctypes import *
 from detect_function import YOLOv5Detector
 import pupil_apriltags as apriltags
 
+#car detection and position approximation
+
 class KalmanFilter:
     def __init__(self):
         # State vector [x, y, vx, vy], position and velocity

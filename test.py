@@ -6,7 +6,7 @@ import cv2
 from ctypes import *
 from detect_function import YOLOv5Detector
  
-sys.path.append(r"E:/CH-HCNetSDKV6.1.9.48_build20230410_win64/MVS/Development/Samples/Python/MvImport/MvCameraControl_class.py")  # 换成自己的MVS中的路径
+sys.path.append(r"MvCameraControl_class.py")
 from MvCameraControl_class import *
 
 class KalmanFilter:
