@@ -119,10 +119,9 @@ def kalman_filter(coordinates):
         predictions.append(updated)
     return predictions[-1]
 
+global car_in_plane = 0
 cap1 = cv2.VideoCapture(1)
 cap2 = cv2.VideoCapture(0)
-
-
 calibration_points_fr1 = []
 calibration_points_fr2 = []
 output_points = [[0, 0], [640, 0], [640, 480]]
@@ -168,28 +167,24 @@ def transform_pixel_coordinates(K ,R, T, pixel_coords_cam1):
 
     return pixel_coords_cam2
 
-import cv2
-import numpy as np
 
 def estimate_apriltag_world_pose(corners, tag_size, camera_matrix, dist_coeffs):
    
-    # 定义 AprilTag 四个角点在 3D 世界坐标中的位置（单位：米）
+    # define apriltag corners position
     half_size = tag_size / 2
     object_points = np.array([
-        [-half_size, -half_size, 0],  # 左下角
-        [half_size, -half_size, 0],   # 右下角
-        [half_size, half_size, 0],    # 右上角
-        [-half_size, half_size, 0]    # 左上角
+        [-half_size, -half_size, 0],  # ld
+        [half_size, -half_size, 0],   # rd
+        [half_size, half_size, 0],    # ru
+        [-half_size, half_size, 0]    # lu
     ], dtype=np.float32)
 
-    # 将检测到的角点坐标转换为适合 cv2.solvePnP 的形状
     image_points = np.array(corners, dtype=np.float32)
 
-    # 使用 solvePnP 计算旋转向量和平移向量
     ret, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
 
     if ret:
-        # 旋转向量转化为旋转矩阵
+        
         R, _ = cv2.Rodrigues(rvec)
 
         return tvec.ravel()
@@ -218,6 +213,7 @@ def process_frame(frame, calibration_points, output_points, frame_number,tag_cor
     x_center = car_x + car_w // 2
     y_center = car_y + car_h // 2
     if car_x is not None and car_y is not None:
+    	car_in_plane = 1
         target_coords = cord_transform((x_center, y_center), calibration_points, output_points)
         draw_point_on_frame(transformed_frame, (int(target_coords[0]), int(target_coords[1])))
         cv2.putText(transformed_frame, "car", (int(target_coords[0]) + 10, int(target_coords[1]) + 10),
@@ -242,7 +238,8 @@ def process_frame(frame, calibration_points, output_points, frame_number,tag_cor
         draw_point_on_frame(transformed_frame, prediction_neighbor, (255, 255, 255), 2)
         cv2.putText(transformed_frame, 'prediction', (int(filtered_coords[0]) + 10, int(filtered_coords[1]) + 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-
+    else:
+    	car_in_plane = 0
     return transformed_frame
 
 while True:
@@ -271,13 +268,14 @@ while True:
                 x += corner[0]
                 y += corner[1]
             central_pt = (x/4,y/4)
-            world_coord1 =  str(estimate_apriltag_world_pose(corners1, tag_size, matrix, dist))
-            world_coord2 =  str(estimate_apriltag_world_pose(corners2, tag_size, matrix, dist))
-            #approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
-            draw_point_on_frame(frame1, central_pt,(128,256,0))
-            cv2.putText(frame1, world_coord1, (int(central_pt[0])-50,int(central_pt[1])),
-                        cv2.FONT_HERSHEY_SIMPLEX, .5, (128,256,0), 2)
-            #draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
+            if car_in_plane:
+            	world_coord1 =  str(estimate_apriltag_world_pose(corners1, tag_size, matrix, dist))
+            	world_coord2 =  str(estimate_apriltag_world_pose(corners2, tag_size, matrix, dist))
+            	#approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
+            	draw_point_on_frame(frame1, central_pt,(128,256,0))
+            	cv2.putText(frame1, world_coord1, (int(central_pt[0])-50,int(central_pt[1])),
+                            cv2.FONT_HERSHEY_SIMPLEX, .5, (128,256,0), 2)
+            	#draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
     
