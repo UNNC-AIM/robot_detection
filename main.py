@@ -119,7 +119,7 @@ def kalman_filter(coordinates):
         predictions.append(updated)
     return predictions[-1]
 
-global car_in_plane = 0
+car_in_plane = False
 cap1 = cv2.VideoCapture(1)
 cap2 = cv2.VideoCapture(0)
 calibration_points_fr1 = []
@@ -213,7 +213,7 @@ def process_frame(frame, calibration_points, output_points, frame_number,tag_cor
     x_center = car_x + car_w // 2
     y_center = car_y + car_h // 2
     if car_x is not None and car_y is not None:
-    	car_in_plane = 1
+        car_in_plane = 1
         target_coords = cord_transform((x_center, y_center), calibration_points, output_points)
         draw_point_on_frame(transformed_frame, (int(target_coords[0]), int(target_coords[1])))
         cv2.putText(transformed_frame, "car", (int(target_coords[0]) + 10, int(target_coords[1]) + 10),
@@ -239,7 +239,7 @@ def process_frame(frame, calibration_points, output_points, frame_number,tag_cor
         cv2.putText(transformed_frame, 'prediction', (int(filtered_coords[0]) + 10, int(filtered_coords[1]) + 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
     else:
-    	car_in_plane = 0
+        car_in_plane = 0
     return transformed_frame
 
 while True:
@@ -269,13 +269,13 @@ while True:
                 y += corner[1]
             central_pt = (x/4,y/4)
             if car_in_plane:
-            	world_coord1 =  str(estimate_apriltag_world_pose(corners1, tag_size, matrix, dist))
-            	world_coord2 =  str(estimate_apriltag_world_pose(corners2, tag_size, matrix, dist))
-            	#approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
-            	draw_point_on_frame(frame1, central_pt,(128,256,0))
-            	cv2.putText(frame1, world_coord1, (int(central_pt[0])-50,int(central_pt[1])),
+                world_coord1 =  str(estimate_apriltag_world_pose(corners1, tag_size, matrix, dist))
+                world_coord2 =  str(estimate_apriltag_world_pose(corners2, tag_size, matrix, dist))
+                #approx_check_pt = transform_pixel_coordinates(matrix, R, T, central_pt) # not very reliable, need improvements
+                draw_point_on_frame(frame1, central_pt,(128,256,0))
+                cv2.putText(frame1, world_coord1, (int(central_pt[0])-50,int(central_pt[1])),
                             cv2.FONT_HERSHEY_SIMPLEX, .5, (128,256,0), 2)
-            	#draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
+                #draw_point_on_frame(frame2, approx_check_pt,(128,256,0))
     cv2.imshow("frame1", frame1)
     cv2.imshow("frame2", frame2)
     
